@@ -17,13 +17,13 @@ app = FastAPI()
 config = dotenv_values(".env")
 
 client = motor.motor_asyncio.AsyncIOMotorClient(config["MONGO_URL"])
-db = client.ECSE3038_Project_Database
+db = client.tank_man
 
 app = FastAPI()
 
 format = "%Y-%m-%d %H:%M:%S %Z%z"
 
-origins = ["http://127.0.0.1:8000", 
+origins = ["http://localhost:8000", 
            "https://simple-smart-hub-client.netlify.app"]
 
 app.add_middleware(
