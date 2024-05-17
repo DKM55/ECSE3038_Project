@@ -121,15 +121,15 @@ async def update_settings(settings_update: Settings = Body(...)):
         # raise HTTPException(status_code=201)
         return JSONResponse(status_code=201, content=final)
     
-@app.post("/sensorData",status_code=201)
+@app.post("/sensordata",status_code=201)
 async def createSensorData(sensor_data:sensorData):
-    new_data = await db["sensorData"].insert_one(sensor_data.model_dump())
-    created_data = await db["sensorData"].find_one({"_id": new_data.inserted_id})
+    new_data = await db["sensordata"].insert_one(sensor_data.model_dump())
+    created_data = await db["sensordata"].find_one({"_id": new_data.inserted_id})
     return sensorData(**created_data)
 
-@app.get("/sensorData", status_code=200)
+@app.get("/sensordata", status_code=200)
 async def get_device_states():
-    data = await db["sensorData"].find().to_list(999)
+    data = await db["sensordata"].find().to_list(999)
     num = len(data) - 1
     sensor = data[num]
 
