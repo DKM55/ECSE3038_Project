@@ -1,24 +1,30 @@
-from datetime import datetime,timedelta
-from typing import Annotated, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Request, Response
-from pydantic import BaseModel, BeforeValidator, TypeAdapter, Field
+import requests
+from datetime import datetime, time, timedelta
+import json
+import re
+from typing import Annotated, List, Optional
+from fastapi import Body, FastAPI, HTTPException, Response, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, BeforeValidator, Field, TypeAdapter
 import motor.motor_asyncio
 from dotenv import dotenv_values
 from bson import ObjectId
 from pymongo import ReturnDocument
 from fastapi.middleware.cors import CORSMiddleware
-import requests 
-import re
-config = dotenv_values(".env")
-
-client = motor.motor_asyncio.AsyncIOMotorClient(config["MONGO_URL"])
-db = client.tank_man
 
 app = FastAPI()
 
-origins=[
-    "http://localhost:8000",
-    "https://simple-smart-hub-client.netlify.app"]
+config = dotenv_values(".env")
+
+client = motor.motor_asyncio.AsyncIOMotorClient(config["MONGO_URL"])
+db = client.ECSE3038_Project_Database
+
+app = FastAPI()
+
+format = "%Y-%m-%d %H:%M:%S %Z%z"
+
+origins = ["http://127.0.0.1:8000", 
+           "https://simple-smart-hub-client.netlify.app"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,6 +36,24 @@ app.add_middleware(
 
 PyObjectId = Annotated[str, BeforeValidator(str)]
 
+class Settings(BaseModel):
+    id: Optional[PyObjectId] = Field(alias = "_id", default = None)
+    user_temp: Optional[float] = None
+    user_light: Optional[str] = None
+    light_time_off: Optional[str] = None
+    light_duration: Optional[str] = None
+
+class updatedSettings(BaseModel):
+    id: Optional[PyObjectId] = Field(alias = "_id", default = None)
+    user_temp: Optional[float] = None
+    user_light: Optional[str] = None
+    light_time_off: Optional[str] = None
+
+class sensorData(BaseModel):
+    id: Optional[PyObjectId] = Field(alias = "_id", default = None)
+    temperature: Optional[float] = None
+    presence: Optional[bool] = None
+    datetime: Optional[str] = None
 
 regex = re.compile(r'((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?')
 
@@ -44,226 +68,87 @@ def parse_time(time_str):
             time_params[name] = int(param)
     return timedelta(**time_params)
 
+ 
+def convert24(time):
+    # Parse the time string into a datetime object
+    t = datetime.strptime(time, '%I:%M:%S %p')
+    # Format the datetime object into a 24-hour time string
+    return t.strftime('%H:%M:%S')
 
-@app.options("/graph")
-async def options_parameter(request: Request):
-    # You can include additional checks here if needed
-    return Response(status_code=200, headers={
-        "Access-Control-Allow-Origin":origins,  # or specify domains
-        "Access-Control-Allow-Methods": "PUT",
-        "Access-Control-Allow-Headers": "*",  # or specify headers
-        "Access-Control-Allow-Credentials":True
-    })
-@app.options("/settings")
-async def options_parameter(request: Request):
-    # You can include additional checks here if needed
-    return Response(status_code=200, headers={
-        "Access-Control-Allow-Origin": origins,  # or specify domains
-        "Access-Control-Allow-Methods": "GET",
-        "Access-Control-Allow-Headers": "*",  # or specify headers
-        "Access-Control-Allow-Credentials":True
-    })
+def sunset_calculation():
+    URL = "https://api.sunrisesunset.io/json"
+    PARAMS = {"lat":"17.97787",
+                "lng": "-76.77339"}
+    r = requests.get(url=URL, params=PARAMS)
+    response = r.json()
+    sunset_time = response["results"]["sunset"]
+    sunset_24 = convert24(sunset_time)
+    return sunset_24
+
+# get request to collect environmental data from ESP
 @app.get("/graph")
-async def get_parameter(request: Request, size: int = 10):
-    sensor_input = await db["data_input"].find().sort("datetime", -1).to_list(size)
+async def get_data(size: int = None):
+    data = await db["data"].find().to_list(size)
+    return TypeAdapter(List[sensorData]).validate_python(data)
 
-    output: List[Dict[str]] = []
+# to post fake data to test get
+# @app.post("/graph", status_code=201)
+# async def create_data(data: graph):
+#     new_entry = await db["data"].insert_one(data.model_dump())
+#     created_entry = await db["data"].find_one({"_id": new_entry.inserted_id})
 
-    for data in sensor_input:
-        temperature = data.get("temperature", 0.0)
-        presence = data.get("presence", False)
-        datetime_str = data.get("datetime", datetime.now().isoformat())
+#     return graph(**created_entry)
 
-        output.append({
-            "temperature": temperature,
-            "presence": presence,
-            "datetime": datetime_str
-        })
-
-    # If the size of the output is less than requested, pad with default values
-    while len(output) < size:
-        output.append({
-            "temperature": 0.0,
-            "presence": False,
-            "datetime": datetime.now().isoformat()
-        })
-
-    # Sort the output in ascending order of time
-    output = sorted(output, key=lambda x: x["datetime"])
-
-    return output
-
-    
-
-
-class Outside(BaseModel):
-    id: Optional[PyObjectId] = Field(alias = "_id", default = None)
-    user_temp: Optional[float] = None
-    user_light: Optional[str] = None
-    light_time_off: Optional[float] = None
-
-
-   
-class UserPreference(BaseModel):
-    user_temp: float
-    user_light: str
-    light_time_off: str 
-
-class UserPreferenceResponse(BaseModel):
-    user_pref: UserPreference
-
-@app.put("/settings", response_model=UserPreferenceResponse, status_code=200)
-async def create_or_update_parameter(request: Request):
-    parameter = await request.json()
-
-    temp = parameter["user_temp"]
-    light = parameter["user_light"]
-    duration_time = parameter["light_duration"]
-
-    if parameter["user_light"] == "sunset":
-        light_select = dark_time()
+@app.put("/settings", status_code=200)
+async def update_settings(settings_update: Settings = Body(...)):
+    if settings_update.user_light == "sunset":
+        user_light = datetime.strptime(sunset_calculation(), "%H:%M:%S")
     else:
-        light_select = datetime.strptime(light, "%H:%M:%S").time()
+        user_light = datetime.strptime(settings_update.user_light, "%H:%M:%S")
 
-    duration_timedelta = parse_time(duration_time)
-    end_time = datetime.combine(datetime.today(), light_select) + duration_timedelta
-    duration_time = end_time.time()
-    user_data = {
-        "user_temp": temp,
-        "user_light": str(light_select),
-        "light_time_off": str(duration_time)
+    duration = parse_time(settings_update.light_duration)
+    settings_update.light_time_off = (user_light + duration).strftime("%H:%M:%S")
+    all_settings = await db["settings"].find().to_list(999)
+    if len(all_settings)==1:
+        db["settings"].update_one({"_id":all_settings[0]["_id"]},{"$set":settings_update.model_dump(exclude = ["light_duration"])})
+        updated_settings = await db["settings"].find_one({"_id": all_settings[0]["_id"]})
+        return updatedSettings(**updated_settings)
+    
+    else:
+        new_settings = await db["settings"].insert_one(settings_update.model_dump(exclude = ["light_duration"]))
+        created_settings = await db["settings"].find_one({"_id": new_settings.inserted_id})
+        final = (updatedSettings(**created_settings)).model_dump()
+        # raise HTTPException(status_code=201)
+        return JSONResponse(status_code=201, content=final)
+    
+@app.post("/sensorData",status_code=201)
+async def createSensorData(sensor_data:sensorData):
+    new_data = await db["sensorData"].insert_one(sensor_data.model_dump())
+    created_data = await db["sensorData"].find_one({"_id": new_data.inserted_id})
+    return sensorData(**created_data)
+
+@app.get("/sensorData", status_code=200)
+async def get_device_states():
+    data = await db["sensorData"].find().to_list(999)
+    num = len(data) - 1
+    sensor = data[num]
+
+    all_settings = await db["settings"].find().to_list(999)
+    user_pref = all_settings[0]
+
+    components = {
+        "fan": False,
+        "light": False
     }
 
-    # Check if there's an existing user preference
-    existing_user_pref = await db["user_pref"].find_one({})
-    if existing_user_pref:
-        # Update existing user preference
-        await db["user_pref"].update_one({}, {"$set": user_data})
-        input_select = await db["user_pref"].find_one({})
+    if ((sensor["temperature"] == user_pref["user_temp"]) & (sensor["presence"] == True) ):
+        components["fan"] = True
     else:
-        # Insert new user preference
-        user_select = await db["user_pref"].insert_one(user_data)
-        input_select = await db["user_pref"].find_one({"_id": user_select.inserted_id})
-
-    return UserPreferenceResponse(user_pref=UserPreference(**input_select))
-
-@app.options("/settings")
-async def options_settings(request: Request):
-    response = Response()
-    response.headers["Access-Control-Allow-Methods"] = "PUT"
-    response.headers["Access-Control-Allow-Origin"] = origins
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
-
-
+        components["fan"] = False
     
-
-def dark_time():
-    response= requests.get("https://api.sunrise-sunset.org/json?lat=18.1155&lng=-77.2760")
-    data= response.json()
-    sunset= data["results"]["sunset"]
-    utc_sunset=datetime.strptime(sunset, "%I:%M:%S %p")
-    time_string='06:00:00'
-    time_object= datetime.strptime(time_string, '%H:%M:%S').time()
-    est_sunset_time= datetime.combine(datetime.min, utc_sunset.time()) + timedelta(hours=time_object.hour, minutes=time_object.minute, seconds=time_object.second)
-    est_sunset_time=(est_sunset_time).time()
-    return est_sunset_time
-
-
-
-
-
-
-class State(BaseModel):
-    temperature: float
-    presence: bool
-    datetime: str 
-    fan: bool
-    light: bool
-    id: str = Field(alias="_id")  # Alias for the ObjectId fi
-class StateResponse(BaseModel):
-    state: Optional[State]
-
-id: str = Field(alias="_id")  # Alias for the ObjectId fi
-
-
-
-class StateE(BaseModel): #for embedded work
-    _id:str
-    temperature: float
-    presence: bool
-    datetime: str
-    fan: bool
-    light: bool
-   
-class StateResponse(BaseModel):
-    stateE: Optional[StateE]
-
-
-
-@app.post("/sensordata", status_code=201)
-async def update_state(request: Request):
-    update_obj = await request.json()
-
-    sensor_temp = update_obj.get("temperature")
-    detection = update_obj.get("presence")
-    date_time = datetime.now().isoformat()
-   
-    update_obj["datetime"] = datetime.now().isoformat()
-
-    user_data = await db["user_pref"].find_one()
-    user_temp = user_data.get("user_temp")
-    user_light = user_data.get("user_light")
-    duration_time = user_data.get("light_time_off")
-    
-
-    if len(update_obj)==0:
-        return{"NO DATA SENT"}
-
-    if len(user_data)==0 or not update_obj or not detection:
-        return {
-            "fan": False,
-            "light": False,
-            "current_time": datetime.now()
-        }
-
-    if isinstance(sensor_temp, int) and isinstance(user_temp, int):
-        update_obj["fan"] = sensor_temp >= user_temp and detection
+    if ((sensor["datetime"] == user_pref["user_light"]) & (sensor["presence"] == True) ):
+        components["light"] = True
     else:
-        update_obj["fan"] = False
-
-    if user_light and date_time :
-        update_obj["light"] = user_light <= date_time < duration_time 
-    else:
-        update_obj["light"] = False
-
-    updated_data = await db["data_input"].insert_one(update_obj)
-    send_data = await db["data_input"].find_one({"_id": updated_data.inserted_id})
-    update_obj_without_id = {key: value for key, value in update_obj.items() if key != "_id"}
-    updated_data = await db["last_updated"].replace_one({}, update_obj_without_id, upsert=True)
-
+        components["light"] = False
     
-    return {
-        "STATUS UPDATED" 
-    }
-
-
-@app.get("/sensordata", status_code=200)
-async def get_states() -> StateE:
-    stateE_object = await db["last_updated"].find().sort('datetime', -1).limit(1).to_list(1)
-    if not stateE_object:
-        return StateE(
-            temperature=0.0,
-            presence=False,
-            datetime=datetime.now(),
-            fan=False,
-            light=False,
-            
-        )
-    
-    
-
-    return stateE_object[0]
-
-
-
+    return components
