@@ -123,6 +123,9 @@ async def update_settings(settings_update: Settings = Body(...)):
     
 @app.post("/sensorData",status_code=201)
 async def createSensorData(sensor_data:sensorData):
+    entry_time = datetime.now().string("%H:%M:%S")
+    sensor_data_ = sensor_data.model_dump()
+    sensor_data_["datetime"] = entry_time
     new_data = await db["sensorData"].insert_one(sensor_data.model_dump())
     created_data = await db["sensorData"].find_one({"_id": new_data.inserted_id})
     return sensorData(**created_data)
