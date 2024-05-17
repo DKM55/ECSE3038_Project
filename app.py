@@ -23,7 +23,7 @@ app = FastAPI()
 
 format = "%Y-%m-%d %H:%M:%S %Z%z"
 
-origins = ["http://localhost:8000", 
+origins = ["http://127.0.0.1:8000", 
            "https://simple-smart-hub-client.netlify.app"]
 
 app.add_middleware(
@@ -121,10 +121,10 @@ async def update_settings(settings_update: Settings = Body(...)):
         # raise HTTPException(status_code=201)
         return JSONResponse(status_code=201, content=final)
     
-@app.post("/sensordata",status_code=201)
+@app.post("/sensorData",status_code=201)
 async def createSensorData(sensor_data:sensorData):
-    new_data = await db["sensordata"].insert_one(sensor_data.model_dump())
-    created_data = await db["sensordata"].find_one({"_id": new_data.inserted_id})
+    new_data = await db["sensorData"].insert_one(sensor_data.model_dump())
+    created_data = await db["sensorData"].find_one({"_id": new_data.inserted_id})
     return sensorData(**created_data)
 
 
