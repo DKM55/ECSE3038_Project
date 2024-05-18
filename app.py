@@ -91,14 +91,6 @@ async def get_data(size: int = None):
     data = await db["data"].find().to_list(size)
     return TypeAdapter(List[sensorData]).validate_python(data)
 
-# to post fake data to test get
-# @app.post("/graph", status_code=201)
-# async def create_data(data: graph):
-#     new_entry = await db["data"].insert_one(data.model_dump())
-#     created_entry = await db["data"].find_one({"_id": new_entry.inserted_id})
-
-#     return graph(**created_entry)
-
 @app.put("/settings", status_code=200)
 async def update_settings(settings_update: Settings = Body(...)):
     if settings_update.user_light == "sunset":
@@ -190,3 +182,51 @@ async def turn_on_components():
         "light": False
     }
     return return_sensor_data
+
+@app.get("/fan",status_code=200)
+async def fan_control():
+    data = await db["sensorData"].find().to_list(999)
+    num = len(data) -1
+    sensors = data[num]
+
+    all_settings = await db["settings"].find().to_list(999)
+    user_pref = all_settings[0]
+
+    if (sensors["presence"] == True):
+
+        if(sensors["temperature"]>=user_pref["user_temp"]):
+            fanstate = True
+
+        else:
+            fanstate = False
+    else:
+        fanstate = False
+
+    componentState = {
+        "fan": fanstate
+    }
+
+    return componentState
+
+@app.get("/light", status_code=200)
+async def light_control():
+    data = await db["sensorData"].find().to_list(999)
+    num = len(data) -1
+    sensors = data[num]
+
+
+    all_settings = await db["settings"].find().to_list(999)
+    user_pref = all_settings[0]
+
+    if(sensors["presence"] == True):
+
+        if(sensors["temperature"] >= user_pref["user_temp"]):
+            lightstate =True
+        else:
+            lightstate = False
+    componentState ={
+        "light" : lightstate
+    }
+
+    return componentState
+
