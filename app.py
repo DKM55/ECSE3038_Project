@@ -17,7 +17,7 @@ app = FastAPI()
 config = dotenv_values(".env")
 
 client = motor.motor_asyncio.AsyncIOMotorClient(config["MONGO_URL"])
-db = client.ECSE3038_Project_Database
+db = client.IOT_DATABASE
 
 app = FastAPI()
 
